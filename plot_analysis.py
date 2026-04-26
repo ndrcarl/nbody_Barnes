@@ -43,7 +43,8 @@ HAS_PHI     = True   # ← change to True once you re-run with options=phi
 N_PARTICLES = 10000
 MASS        = 0.0001
 G           = 1.0
-EPS         = 0.001    # softening (same as treecode run parameter)
+import sys
+EPS = float(sys.argv[1]) if len(sys.argv) > 1 else 0.001    # softening (same as treecode run parameter)
 
 M_tot = N_PARTICLES * MASS
 rho_0 = M_tot / ((4.0 / 3.0) * math.pi * 1.0**3)
