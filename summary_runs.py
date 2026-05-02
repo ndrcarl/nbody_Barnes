@@ -843,13 +843,12 @@ for idx, d in enumerate(run_dirs):
     nfw_rs_list.append(_nfw_rs)
     nfw_rhos_list.append(_nfw_rhos)
     nfw_ok_list.append(_nfw_ok)
-    # store binned profile for plotting
+    # store binned profile for plotting — only non-empty bins (_ok already applied)
     nfw_profiles.append({
         "run_id":   run_id,
-        "r_mid":    _r_mid   if _nfw_ok else None,
-        "rho":      _rho     if _nfw_ok else None,
-        "counts":   _counts  if _nfw_ok else None,
-        "ok_mask":  _ok      if _nfw_ok else None,
+        "r_mid":    _r_mid[_ok]  if _nfw_ok else None,
+        "rho":      _rho[_ok]    if _nfw_ok else None,
+        "counts":   _counts[_ok] if _nfw_ok else None,
         "rs":       _nfw_rs,
         "rhos":     _nfw_rhos,
         "chi2_red": _chi2_red if _nfw_ok else np.nan,
@@ -1299,33 +1298,23 @@ if any(p["ok"] for p in nfw_profiles):
             r_data   = prof["r_mid"]
             rho_data = prof["rho"]
             counts   = prof["counts"]
-            ok_mask  = prof["ok_mask"]
             rs       = prof["rs"]
             rhos     = prof["rhos"]
             r_cut    = prof["r_cut"]
             chi2_red = prof["chi2_red"]
 
             # data range for axis limits and fit line
-            r_data_min = r_data[rho_data > 0].min() if (rho_data > 0).any() else r_cut
-            r_data_max = r_data[rho_data > 0].max() if (rho_data > 0).any() else 1.0
+            r_data_min = r_data.min() if len(r_data) > 0 else r_cut
+            r_data_max = r_data.max() if len(r_data) > 0 else 1.0
 
-            # Poisson error bars in linear space: sigma_rho = rho / sqrt(n)
-            _ok_bins  = rho_data > 0
-            _n_ok     = counts[ok_mask][_ok_bins] if (counts is not None and ok_mask is not None) else None
-            _rho_ok   = rho_data[_ok_bins]
-            _r_ok     = r_data[_ok_bins]
-            if _n_ok is not None:
-                _sigma_rho = _rho_ok / np.sqrt(_n_ok)
-                ax.errorbar(_r_ok, _rho_ok, yerr=_sigma_rho,
-                            fmt='o', ms=4, color='steelblue', ecolor='steelblue',
-                            elinewidth=0.8, capsize=2, zorder=3,
-                            label='binned $\\rho$ (bound)')
-            else:
-                ax.scatter(_r_ok, _rho_ok,
-                           s=18, color='steelblue', zorder=3,
-                           label='binned $\\rho$ (bound)')
+            # Poisson error bars: all stored bins are already non-empty
+            _sigma_rho = rho_data / np.sqrt(counts)
+            ax.errorbar(r_data, rho_data, yerr=_sigma_rho,
+                        fmt='o', ms=4, color='steelblue', ecolor='steelblue',
+                        elinewidth=0.8, capsize=2, zorder=3,
+                        label='binned $\\rho$ (bound)')
 
-            # NFW fit line — drawn only over actual data range
+            # NFW fit line over actual data range
             _r_fit = np.logspace(np.log10(max(r_cut, r_data_min)),
                                  np.log10(r_data_max), 200)
             _rho_fit = rhos / ((_r_fit/rs) * (1.0 + _r_fit/rs)**2)
@@ -1338,7 +1327,7 @@ if any(p["ok"] for p in nfw_profiles):
             ax.axvline(r_cut, color='orange', lw=1.5,
                        ls='--', label=f'$2\\varepsilon$={r_cut:.4f}')
 
-            # set axis limits to actual data range with small margin
+            # axis limits
             ax.set_xlim(r_data_min * 0.5, r_data_max * 2.0)
             ax.set_xscale('log'); ax.set_yscale('log')
             ax.set_xlabel('$r$ [code units]')
