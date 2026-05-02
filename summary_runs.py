@@ -806,31 +806,55 @@ for idx, d in enumerate(run_dirs):
                     rhos = np.exp(log_rhos)
                     return np.log(rhos / ((r/rs) * (1.0 + r/rs)**2))
 
+                # Poisson sigma in log space: sigma_log_rho = 1/sqrt(n_counts)
+                # Bins with 1 particle get sigma=1.0 (maximum uncertainty).
+                # This weights high-count bins more heavily — physically motivated.
+                _sigma_log = np.where(_counts[_ok] > 0,
+                                      1.0 / np.sqrt(_counts[_ok]),
+                                      1.0)
+
                 try:
                     _p0 = [np.log(_rho[_ok].max()), np.log(_r_mid[_ok].mean())]
-                    _popt, _ = curve_fit(
+                    _popt, _pcov = curve_fit(
                         _nfw_log,
                         np.log(_r_mid[_ok]), np.log(_rho[_ok]),
-                        p0=_p0, maxfev=5000)
+                        p0=_p0, sigma=_sigma_log, absolute_sigma=True,
+                        maxfev=5000)
                     _nfw_rhos = np.exp(_popt[0])
                     _nfw_rs   = np.exp(_popt[1])
                     _nfw_ok   = True
-                    print(f"  NFW fit: rho_s={_nfw_rhos:.4e}  r_s={_nfw_rs:.4f}")
+
+                    # Reduced chi-square: chi2 / (n_bins - 2 free params)
+                    _log_rho_model = _nfw_log(np.log(_r_mid[_ok]),
+                                              _popt[0], _popt[1])
+                    _residuals = np.log(_rho[_ok]) - _log_rho_model
+                    _chi2      = np.sum((_residuals / _sigma_log) ** 2)
+                    _ndof      = _ok.sum() - 2
+                    _chi2_red  = _chi2 / _ndof if _ndof > 0 else np.nan
+
+                    print(f"  NFW fit: rho_s={_nfw_rhos:.4e}  r_s={_nfw_rs:.4f}  "
+                          f"chi2_red={_chi2_red:.2f}")
                 except Exception as _e:
+                    _chi2_red = np.nan
                     print(f"  NFW fit failed: {_e}")
+            else:
+                _chi2_red = np.nan
 
     nfw_rs_list.append(_nfw_rs)
     nfw_rhos_list.append(_nfw_rhos)
     nfw_ok_list.append(_nfw_ok)
-    # store binned profile for plotting (last run overwrites — we plot all runs)
+    # store binned profile for plotting
     nfw_profiles.append({
-        "run_id": run_id,
-        "r_mid":  _r_mid  if _nfw_ok else None,
-        "rho":    _rho    if _nfw_ok else None,
-        "rs":     _nfw_rs,
-        "rhos":   _nfw_rhos,
-        "ok":     _nfw_ok,
-        "r_cut":  _r_cut  if not np.isnan(EPS_VAL) else 0,
+        "run_id":   run_id,
+        "r_mid":    _r_mid   if _nfw_ok else None,
+        "rho":      _rho     if _nfw_ok else None,
+        "counts":   _counts  if _nfw_ok else None,
+        "ok_mask":  _ok      if _nfw_ok else None,
+        "rs":       _nfw_rs,
+        "rhos":     _nfw_rhos,
+        "chi2_red": _chi2_red if _nfw_ok else np.nan,
+        "ok":       _nfw_ok,
+        "r_cut":    _r_cut   if not np.isnan(EPS_VAL) else 0,
     })
 
     # store data needed for density evolution figure (Section 13c)
@@ -1264,7 +1288,7 @@ if any(p["ok"] for p in nfw_profiles):
                                      squeeze=False)
     fig_nfw.suptitle(f'NFW density profile of bound remnant — {eps_label}\n'
                      r'$\rho(r) = \rho_s\,/\,[(r/r_s)(1+r/r_s)^2]$  '
-                     '— fit excludes $r < 2\varepsilon$',
+                     '— fit excludes $r < 2\\varepsilon$',
                      fontsize=12)
 
     for pi, prof in enumerate(nfw_profiles):
@@ -1272,28 +1296,43 @@ if any(p["ok"] for p in nfw_profiles):
         ax = axes_nfw[row, col]
 
         if prof["ok"]:
-            r_data = prof["r_mid"]
+            r_data   = prof["r_mid"]
             rho_data = prof["rho"]
-            rs   = prof["rs"]
-            rhos = prof["rhos"]
-            r_cut = prof["r_cut"]
+            counts   = prof["counts"]
+            ok_mask  = prof["ok_mask"]
+            rs       = prof["rs"]
+            rhos     = prof["rhos"]
+            r_cut    = prof["r_cut"]
+            chi2_red = prof["chi2_red"]
 
             # data range for axis limits and fit line
             r_data_min = r_data[rho_data > 0].min() if (rho_data > 0).any() else r_cut
             r_data_max = r_data[rho_data > 0].max() if (rho_data > 0).any() else 1.0
 
-            # binned data — only plot bins with actual particles
-            _ok_bins = rho_data > 0
-            ax.scatter(r_data[_ok_bins], rho_data[_ok_bins],
-                       s=18, color='steelblue', zorder=3,
-                       label='binned $\\rho$ (bound)')
+            # Poisson error bars in linear space: sigma_rho = rho / sqrt(n)
+            _ok_bins  = rho_data > 0
+            _n_ok     = counts[ok_mask][_ok_bins] if (counts is not None and ok_mask is not None) else None
+            _rho_ok   = rho_data[_ok_bins]
+            _r_ok     = r_data[_ok_bins]
+            if _n_ok is not None:
+                _sigma_rho = _rho_ok / np.sqrt(_n_ok)
+                ax.errorbar(_r_ok, _rho_ok, yerr=_sigma_rho,
+                            fmt='o', ms=4, color='steelblue', ecolor='steelblue',
+                            elinewidth=0.8, capsize=2, zorder=3,
+                            label='binned $\\rho$ (bound)')
+            else:
+                ax.scatter(_r_ok, _rho_ok,
+                           s=18, color='steelblue', zorder=3,
+                           label='binned $\\rho$ (bound)')
 
             # NFW fit line — drawn only over actual data range
             _r_fit = np.logspace(np.log10(max(r_cut, r_data_min)),
                                  np.log10(r_data_max), 200)
             _rho_fit = rhos / ((_r_fit/rs) * (1.0 + _r_fit/rs)**2)
+            _chi2_label = (f'$\\chi^2_\\nu$={chi2_red:.1f}'
+                           if np.isfinite(chi2_red) else '')
             ax.plot(_r_fit, _rho_fit, color='crimson', lw=2,
-                    label=f'NFW  $r_s$={rs:.3f}\n$\\rho_s$={rhos:.2e}')
+                    label=f'NFW  $r_s$={rs:.3f}\n$\\rho_s$={rhos:.2e}\n{_chi2_label}')
 
             # softening cutoff
             ax.axvline(r_cut, color='orange', lw=1.5,
@@ -1324,11 +1363,12 @@ if any(p["ok"] for p in nfw_profiles):
 
     # print NFW parameter table
     print(f"\nNFW FIT SUMMARY — {eps_label}")
-    print(f"{'Run':<6} {'r_s':>10} {'rho_s':>14} {'fit_ok':>8}")
-    print("-" * 42)
+    print(f"{'Run':<6} {'r_s':>10} {'rho_s':>14} {'chi2_red':>10} {'fit_ok':>8}")
+    print("-" * 52)
     for pi, prof in enumerate(nfw_profiles):
+        chi2_str = f"{prof['chi2_red']:.2f}" if np.isfinite(prof['chi2_red']) else "  n/a"
         print(f"{prof['run_id']:<6} {prof['rs']:>10.4f} "
-              f"{prof['rhos']:>14.4e} {'yes' if prof['ok'] else 'NO':>8}")
+              f"{prof['rhos']:>14.4e} {chi2_str:>10} {'yes' if prof['ok'] else 'NO':>8}")
 
 
 # ============================================================
@@ -1360,7 +1400,8 @@ if density_run_data and times_ref is not None:
         squeeze=False)
     fig_dens.suptitle(
         f'Density profile evolution — {eps_label}\n'
-        f'blue = all  |  green = bound  |  red = unbound\n'
+        f'green = bound  |  red = unbound  '
+        f'(both measured from bound CM)\n'
         f'dashed = $2\\varepsilon = {_r_cut_dens:.4f}$ (softening floor, fit cutoff)',
         fontsize=12)
 
@@ -1387,29 +1428,27 @@ if density_run_data and times_ref is not None:
                 continue
             ax = axes_dens[row_idx, col_idx]
 
-            cm_all = np.mean(pos_snap, axis=0)
-
-            # ALL particles
-            r_m, rho_v = bin_density_profile(
-                pos_snap, cm_all, mass, r_inner=_r_cut_dens)
-            if r_m is not None:
-                ax.scatter(r_m, rho_v, s=12, color='steelblue',
-                           alpha=0.7, label='all', zorder=2)
+            # Use bound CM as the single reference for all subsets.
+            # This ensures bound and unbound radii are measured from the
+            # same physical origin (the collapsed remnant), making the
+            # three panels directly comparable across time.
+            if bound_d.sum() > 5:
+                cm_ref = np.mean(pos_snap[bound_d], axis=0)
+            else:
+                cm_ref = np.mean(pos_snap, axis=0)
 
             # BOUND particles — centred on bound CM
             if bound_d.sum() > 5:
-                cm_b = np.mean(pos_snap[bound_d], axis=0)
                 r_m_b, rho_b = bin_density_profile(
-                    pos_snap[bound_d], cm_b, mass, r_inner=_r_cut_dens)
+                    pos_snap[bound_d], cm_ref, mass, r_inner=_r_cut_dens)
                 if r_m_b is not None:
                     ax.scatter(r_m_b, rho_b, s=12, color='green',
                                alpha=0.8, label='bound', zorder=3)
 
-            # UNBOUND particles — centred on unbound CM
+            # UNBOUND particles — centred on same bound CM
             if (~bound_d).sum() > 5:
-                cm_u = np.mean(pos_snap[~bound_d], axis=0)
                 r_m_u, rho_u = bin_density_profile(
-                    pos_snap[~bound_d], cm_u, mass, r_inner=_r_cut_dens)
+                    pos_snap[~bound_d], cm_ref, mass, r_inner=_r_cut_dens)
                 if r_m_u is not None:
                     ax.scatter(r_m_u, rho_u, s=12, color='crimson',
                                alpha=0.8, label='unbound', zorder=3)
