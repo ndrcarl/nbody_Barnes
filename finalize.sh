@@ -32,11 +32,25 @@ for f in "${LOG_FILES[@]}"; do
 done
 
 # ----------------------------------------------------------
+# Re-run per-eps summaries to capture all terminal output
+# (safe to re-run — overwrites summary_stats.npz and PDFs)
+# ----------------------------------------------------------
+echo ""
+echo "Re-running per-eps summaries to capture output to logs ..."
+for eps_dir in "$BASE_DIR"/eps_*/; do
+    eps_tag=$(basename "$eps_dir")
+    summary_log="$eps_dir/summary_${eps_tag}.log"
+    echo "  $eps_tag ..."
+    python3 "$BASE_DIR/summary_runs.py" "$eps_dir" 2>&1 | tee "$summary_log"
+done
+
+# ----------------------------------------------------------
 # Run combined mode — cross-eps comparison plots
 # Requires all eps phases to have completed so that
 # eps_*/summary_stats.npz files exist.
 # ----------------------------------------------------------
 echo ""
 echo "Running summary_runs.py --combined ..."
-python3 "$BASE_DIR/summary_runs.py" --combined
+python3 "$BASE_DIR/summary_runs.py" --combined 2>&1 | tee "$BASE_DIR/summary_combined.log"
 echo "Combined plots written to combined/"
+echo "Combined summary log saved to summary_combined.log"
