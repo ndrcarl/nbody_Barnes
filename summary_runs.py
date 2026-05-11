@@ -84,6 +84,8 @@ if COMBINED_MODE:
 
     # ---- helper: plot_band for combined ----
     def plot_band_c(ax, t, mat, color, label, alpha=0.15, lw=2.0):
+        if mat is None or mat.size == 0:
+            return                              # eps group had no good runs
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             med = np.nanmedian(mat, axis=0)
@@ -213,6 +215,70 @@ if COMBINED_MODE:
     plt.tight_layout()
     out = os.path.join(outdir, "combined_scalars_vs_eps.pdf")
     plt.savefig(out, dpi=300); plt.close(figC2)
+    print(f"Saved: {out}")
+
+    # ----------------------------------------------------------------
+    # FIG C2b: |ΔE/E| per run and median vs eps
+    #   Clearly shows which eps values fail the quality threshold.
+    #   Threshold is E_ERR_THRESHOLD = 1.0 (100%) — see line 327.
+    # ----------------------------------------------------------------
+    E_THRESH = 1.0          # must match E_ERR_THRESHOLD in per-eps config
+    figC2b, axE = plt.subplots(1, 1, figsize=(9, 5))
+    figC2b.suptitle(
+        f"Energy conservation error vs softening $\\varepsilon$  (N={N_c})\n"
+        "each point = one run  |  line = median per $\\varepsilon$  |  "
+        "red dashed = rejection threshold", fontsize=11)
+
+    eps_med_err = []
+    for g, c in zip(groups, colors):
+        d    = g["d"]
+        ee   = np.abs(d["energy_err"])          # |ΔE/E| for every run
+        rn   = d["run_numbers"]
+        good_mask = d["good"].astype(bool)
+        eps_v = float(d["eps_val"])
+
+        # scatter all runs; mark rejected ones with a cross
+        axE.scatter(np.full(good_mask.sum(),  eps_v), ee[good_mask],
+                    color=c, s=60, zorder=4, alpha=0.85,
+                    marker='o', label=g["tag"])
+        if (~good_mask).any():
+            axE.scatter(np.full((~good_mask).sum(), eps_v), ee[~good_mask],
+                        color=c, s=80, zorder=5, alpha=0.95,
+                        marker='x', linewidths=2)   # rejected = cross, same colour
+
+        eps_med_err.append(np.nanmedian(ee))
+
+    # median line across eps values
+    axE.plot(eps_arr, eps_med_err, 'k--o', lw=1.5, ms=7, zorder=6,
+             label='median $|\\Delta E/E|$')
+
+    # threshold line
+    axE.axhline(E_THRESH, color='red', lw=2.0, ls='--', zorder=3,
+                label=f'rejection threshold = {E_THRESH:.0%}')
+
+    # annotate eps values where all runs were rejected
+    for g, me in zip(groups, eps_med_err):
+        d = g["d"]
+        if not d["good"].astype(bool).any():
+            axE.annotate('all rejected',
+                         xy=(float(d["eps_val"]), me),
+                         xytext=(0, 18), textcoords='offset points',
+                         ha='center', fontsize=8, color='red',
+                         arrowprops=dict(arrowstyle='->', color='red', lw=1.2))
+
+    axE.set_xscale('log')
+    axE.set_yscale('log')
+    axE.set_xlabel('$\\varepsilon$')
+    axE.set_ylabel('$|\\Delta E / E|$')
+    axE.set_title('Energy error per run  (× = rejected)')
+    axE.legend(fontsize=8, ncol=2)
+    axE.grid(True, lw=0.4, alpha=0.4, which='both')
+    for e, c in zip(eps_arr, colors):
+        axE.axvline(e, color=c, lw=0.6, ls='--', alpha=0.3)
+
+    plt.tight_layout()
+    out = os.path.join(outdir, "combined_energy_error.pdf")
+    plt.savefig(out, dpi=300); plt.close(figC2b)
     print(f"Saved: {out}")
 
     # ----------------------------------------------------------------
